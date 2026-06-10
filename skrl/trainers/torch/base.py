@@ -207,7 +207,7 @@ class Trainer(ABC):
                 # compute actions
                 with ScopedTimer() as timer:
                     actions, outputs = self.agents.act(
-                        observations, states, timestep=timestep, timesteps=self.cfg.timesteps
+                        observations, states, infos=infos, timestep=timestep, timesteps=self.cfg.timesteps
                     )
                     self.agents.track_data("Stats / Inference time (ms)", timer.elapsed_time_ms)
 
@@ -300,7 +300,7 @@ class Trainer(ABC):
                 # compute actions
                 with ScopedTimer() as timer:
                     actions, outputs = self.agents.act(
-                        observations, states, timestep=timestep, timesteps=self.cfg.timesteps
+                        observations, states, infos=infos, timestep=timestep, timesteps=self.cfg.timesteps
                     )
                     self.agents.track_data("Stats / Inference time (ms)", timer.elapsed_time_ms)
                 actions = actions if self.cfg.stochastic_evaluation else outputs.get("mean_actions", actions)

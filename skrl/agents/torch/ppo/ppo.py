@@ -194,7 +194,7 @@ class PPO(Agent):
         self._rollout = 0
 
     def act(
-        self, observations: torch.Tensor, states: torch.Tensor | None, *, timestep: int, timesteps: int
+        self, observations: torch.Tensor, states: torch.Tensor | None, *, infos: dict[str, Any] | None = None, timestep: int, timesteps: int
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         """Process the environment's observations/states to make a decision (actions) using the main policy.
 
@@ -206,6 +206,9 @@ class PPO(Agent):
         :return: Agent output. The first component is the expected action/value returned by the agent.
             The second component is a dictionary containing extra output values according to the model.
         """
+        print(infos.keys() if infos is not None else "No info available")
+        if infos is not None and 'prop_estimator_obs' in infos:
+            print("Prop estimator obs:", infos['prop_estimator_obs'].shape)
         inputs = {
             "observations": self._observation_preprocessor(observations),
             "states": self._state_preprocessor(states),
