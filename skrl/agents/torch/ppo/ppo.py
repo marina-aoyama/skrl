@@ -19,6 +19,8 @@ from skrl.utils import ScopedTimer
 
 from .ppo_cfg import PPO_CFG
 
+from skrl.nn_models.lstm_uncertainty_estimator import LSTM_Unc
+import torch.optim as optim
 
 def compute_gae(
     *,
@@ -193,6 +195,25 @@ class PPO(Agent):
         self._current_values = None
         self._rollout = 0
 
+        # Initialise the 5 prop estimators for properties and their uncertainty estimation
+        self.prop_models = []
+        input_size = 4 
+        hidden_size = 64
+        num_layers = 1
+        output_size = 1
+        for i in range(5):
+            self.prop_models.append(LSTM_Unc(input_size, hidden_size, num_layers, output_size, i).to(self.device))
+        # self.prop_criterion = likelihood_loss
+        # self.mse = nn.MSELoss()
+        prop_learning_rates = [0.01, 0.003, 0.001, 0.0003, 0.0001]
+        self.prop_optimizers = [optim.Adam(model.parameters(), lr=prop_learning_rates[i]) for i, model in enumerate(self.prop_models)]
+        print("Prop estimator models initialized.")
+        # print(self.prop_models)
+
+        # Initialise property estimator observation and target buffer 
+        self.curr_rollout_lstm_input = []
+        self.curr_rollout_lstm_target = []
+
     def act(
         self, observations: torch.Tensor, states: torch.Tensor | None, *, infos: dict[str, Any] | None = None, timestep: int, timesteps: int
     ) -> tuple[torch.Tensor, dict[str, Any]]:
@@ -206,9 +227,41 @@ class PPO(Agent):
         :return: Agent output. The first component is the expected action/value returned by the agent.
             The second component is a dictionary containing extra output values according to the model.
         """
-        print(infos.keys() if infos is not None else "No info available")
-        if infos is not None and 'prop_estimator_obs' in infos:
-            print("Prop estimator obs:", infos['prop_estimator_obs'].shape)
+
+        # Get obs for property estimator 
+        curr_lstm_prop_input = infos["prop_estimator_obs"]
+        normalized_curr_lstm_prop_input = curr_lstm_prop_input.clone()
+        print("Current LSTM prop input:", curr_lstm_prop_input.shape)
+
+        self.curr_rollout_lstm_input.append(normalized_curr_lstm_prop_input)
+
+        print(len(self.curr_rollout_lstm_input))
+
+        # # Get target property values for property estimator training 
+        # curr_lstm_prop_target_list = []
+        # normalized_curr_lstm_prop_target_list = []
+        # for curr_prop_name in self.all_prop_names: 
+        #     curr_lstm_prop_target_target = infos["prop_dict"][curr_prop_name].reshape(-1,1)
+        #     targets = curr_lstm_prop_target_target
+        #     normalized_target = normalize(targets, self.prop_normalisation_dict[curr_prop_name][0], self.prop_normalisation_dict[curr_prop_name][1], self.prop_normalisation_dict["estimate_target"][0], self.prop_normalisation_dict["estimate_target"][1])
+        #     # curr_lstm_prop_target_com = infos["prop"][:,[1,2]]  
+        #     # coms = curr_lstm_prop_target_com
+        #     # normalized_com = normalize(coms, self.com_min, self.com_max, self.estimate_target_min, self.estimate_target_max)
+        #     curr_lstm_prop_target_list.append(targets)
+        #     normalized_curr_lstm_prop_target_list.append(normalized_target)
+
+        #     # curr_lstm_prop_target_fric = infos["prop"][:,0].reshape(-1,1)
+        #     # frictions = curr_lstm_prop_target_fric
+        #     # normalized_friction = normalize(frictions, self.fric_min, self.fric_max, self.estimate_target_min, self.estimate_target_max)
+        #     # curr_lstm_prop_target_com = infos["prop"][:,[1,2]]  
+        #     # coms = curr_lstm_prop_target_com
+        #     # normalized_com = normalize(coms, self.com_min, self.com_max, self.estimate_target_min, self.estimate_target_max)
+            
+        #     curr_lstm_prop_target = torch.cat(curr_lstm_prop_target_list, dim=1)
+        #     normalized_curr_lstm_prop_target = torch.cat(normalized_curr_lstm_prop_target_list, dim=1)
+
+
+
         inputs = {
             "observations": self._observation_preprocessor(observations),
             "states": self._state_preprocessor(states),
