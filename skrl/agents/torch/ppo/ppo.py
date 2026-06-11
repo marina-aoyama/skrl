@@ -65,6 +65,9 @@ def compute_gae(
 
     return returns, advantages
 
+def likelihood_loss(mean_pred, mean_true, ln_sig_sq):
+    return (1/2)*torch.mean(torch.sum(torch.exp(-1*ln_sig_sq)*torch.square(mean_true-mean_pred), dim=1) + torch.sum(ln_sig_sq, dim=1))
+
 
 class PPO(Agent):
     def __init__(
@@ -200,10 +203,12 @@ class PPO(Agent):
         input_size = 4 
         hidden_size = 64
         num_layers = 1
-        output_size = 1
+        output_size = 3
+        self.num_epochs = 5
+        self.all_prop_names = ["static_friction", "dynamic_friction", "restitution"]
         for i in range(5):
             self.prop_models.append(LSTM_Unc(input_size, hidden_size, num_layers, output_size, i).to(self.device))
-        # self.prop_criterion = likelihood_loss
+        self.prop_criterion = likelihood_loss
         # self.mse = nn.MSELoss()
         prop_learning_rates = [0.01, 0.003, 0.001, 0.0003, 0.0001]
         self.prop_optimizers = [optim.Adam(model.parameters(), lr=prop_learning_rates[i]) for i, model in enumerate(self.prop_models)]
@@ -231,36 +236,11 @@ class PPO(Agent):
         # Get obs for property estimator 
         curr_lstm_prop_input = infos["prop_estimator_obs"]
         normalized_curr_lstm_prop_input = curr_lstm_prop_input.clone()
-        print("Current LSTM prop input:", curr_lstm_prop_input.shape)
+        self.curr_rollout_lstm_input.append(normalized_curr_lstm_prop_input.detach().clone())
 
-        self.curr_rollout_lstm_input.append(normalized_curr_lstm_prop_input)
-
-        print(len(self.curr_rollout_lstm_input))
-
-        # # Get target property values for property estimator training 
-        # curr_lstm_prop_target_list = []
-        # normalized_curr_lstm_prop_target_list = []
-        # for curr_prop_name in self.all_prop_names: 
-        #     curr_lstm_prop_target_target = infos["prop_dict"][curr_prop_name].reshape(-1,1)
-        #     targets = curr_lstm_prop_target_target
-        #     normalized_target = normalize(targets, self.prop_normalisation_dict[curr_prop_name][0], self.prop_normalisation_dict[curr_prop_name][1], self.prop_normalisation_dict["estimate_target"][0], self.prop_normalisation_dict["estimate_target"][1])
-        #     # curr_lstm_prop_target_com = infos["prop"][:,[1,2]]  
-        #     # coms = curr_lstm_prop_target_com
-        #     # normalized_com = normalize(coms, self.com_min, self.com_max, self.estimate_target_min, self.estimate_target_max)
-        #     curr_lstm_prop_target_list.append(targets)
-        #     normalized_curr_lstm_prop_target_list.append(normalized_target)
-
-        #     # curr_lstm_prop_target_fric = infos["prop"][:,0].reshape(-1,1)
-        #     # frictions = curr_lstm_prop_target_fric
-        #     # normalized_friction = normalize(frictions, self.fric_min, self.fric_max, self.estimate_target_min, self.estimate_target_max)
-        #     # curr_lstm_prop_target_com = infos["prop"][:,[1,2]]  
-        #     # coms = curr_lstm_prop_target_com
-        #     # normalized_com = normalize(coms, self.com_min, self.com_max, self.estimate_target_min, self.estimate_target_max)
-            
-        #     curr_lstm_prop_target = torch.cat(curr_lstm_prop_target_list, dim=1)
-        #     normalized_curr_lstm_prop_target = torch.cat(normalized_curr_lstm_prop_target_list, dim=1)
-
-
+        # Get target property values for property estimator training 
+        curr_lstm_prop_target = infos["target_prop_values"]
+        self.curr_rollout_lstm_target.append(curr_lstm_prop_target.detach().clone())
 
         inputs = {
             "observations": self._observation_preprocessor(observations),
@@ -280,6 +260,46 @@ class PPO(Agent):
             if self.training:
                 values, _ = self.value.act(inputs, role="value")
                 self._current_values = self._value_preprocessor(values, inverse=True)
+
+        print("Actions from policy model:", actions.shape)
+        print("Outputs from policy model:", type(outputs), outputs.keys())
+
+        # # Get property estimates, uncertainty estimation and loss 
+        # print("Getting property estimates and uncertainty estimation from prop estimator models.")
+        estimates = []
+        ln_sig_sqs = []
+        with torch.no_grad():
+            for model in self.prop_models:
+                estimate, ln_sig_sq = model(normalized_curr_lstm_prop_input)
+                estimates.append(estimate)
+                ln_sig_sqs.append(ln_sig_sq)
+                print("Output from prop estimator model:", estimate.shape)
+                print("Log variance output from prop estimator model:", ln_sig_sq.shape)
+            
+        # mean_normalized_outputs = torch.stack(outputs, dim=1).mean(dim=1)
+        # mean_normalized_sig_sq = torch.exp(torch.stack(ln_sig_sqs, dim=1).mean(dim=1))
+
+        # denormalsied_output_list = []
+        # denormalsied_target_list = []
+        # for i, curr_prop_name in enumerate(self.all_prop_names): 
+        #     denormalsied_output_currprop = denormalize(mean_normalized_outputs[:,i].reshape(-1,1), self.prop_normalisation_dict[curr_prop_name][0], self.prop_normalisation_dict[curr_prop_name][1], self.prop_normalisation_dict["estimate_target"][0], self.prop_normalisation_dict["estimate_target"][1])
+        #     denormalsied_target_currprop = denormalize(normalized_curr_rnn_prop_target[:,i].reshape(-1,1), self.prop_normalisation_dict[curr_prop_name][0], self.prop_normalisation_dict[curr_prop_name][1], self.prop_normalisation_dict["estimate_target"][0], self.prop_normalisation_dict["estimate_target"][1])
+        #     denormalsied_output_list.append(denormalsied_output_currprop)
+        #     denormalsied_target_list.append(denormalsied_target_currprop)
+
+        # denormalsied_output = torch.cat(denormalsied_output_list, dim=1)
+        # denormalsied_target = torch.cat(denormalsied_target_list, dim=1)
+        
+        # rnn_losses = []
+        # for output, ln_sig_sq in zip(outputs, ln_sig_sqs):
+        #     rnn_losses.append(self.prop_criterion(output, normalized_curr_rnn_prop_target, ln_sig_sq))
+        
+        # rnn_rmse = torch.sqrt(self.mse(denormalsied_output, curr_rnn_prop_target))
+
+        # mean_squares = torch.stack([torch.square(output) for output in outputs], dim=1).mean(dim=1)
+        # square_mean = torch.square(mean_normalized_outputs)
+        # epistemic_uncertainty_normalized = mean_squares - square_mean
+        # total_uncertainty_normalized = mean_normalized_sig_sq + epistemic_uncertainty_normalized
 
         return actions, outputs
 
@@ -380,6 +400,13 @@ class PPO(Agent):
                     self.update(timestep=timestep, timesteps=timesteps)
                     self.enable_models_training_mode(False)
                     self.track_data("Stats / Algorithm update time (ms)", timer.elapsed_time_ms)
+
+                    # Property estimator update
+                    for model in self.prop_models:
+                        model.train()
+                    self.update_prop_estimator(timestep=timestep, timesteps=timesteps)
+                    for model in self.prop_models:
+                        model.eval()
 
         # write tracking data and checkpoints
         super().post_interaction(timestep=timestep, timesteps=timesteps)
@@ -534,3 +561,61 @@ class PPO(Agent):
 
         if self.scheduler:
             self.track_data("Learning / Learning rate", self.scheduler.get_last_lr()[0])
+
+
+    def update_prop_estimator(self, timestep: int, timesteps: int) -> None:
+        # print("Prop estimator update")
+        
+        for epoch in range(self.num_epochs):
+            for i, rnn_input in enumerate(self.curr_rollout_lstm_input):
+                for model, optimizer in zip(self.prop_models, self.prop_optimizers):
+                    # print("RNN input shapeeeeeeeeeeeeeeeeeeee")
+                    # print(rnn_input.shape)
+                    # print(i)
+                    # print(self.curr_rollout_lstm_target[i].shape)
+
+                    targets = self.curr_rollout_lstm_target[i]
+                    
+                    outputs, ln_sig_sq = model(rnn_input)
+
+                    # mean_friction = 0.5
+                    # weight = 1+ torch.abs(targets-mean_friction)
+                    # loss = torch.mean(weight*(outputs-targets)**2)
+                    
+                    # Assuming weights is a 1D tensor with 4 elements (one for each feature)
+                    # weights = torch.tensor([1.0, 1.0, 1.0, 1.0], device=outputs.device)  # Replace w1, w2, w3, w4 with your weights
+                    # weights = torch.tensor([1.0, 1.0, 1.0, 1.0, 1.0, 1.0], device=outputs.device)  # Replace w1, w2, w3, w4 with your weights
+
+                    # # Compute the element-wise loss
+                    # self.prop_criterion_noreduction = nn.MSELoss(reduction='none')
+                    # elementwise_loss = self.prop_criterion_noreduction(outputs, targets)  # Ensure no reduction yet
+
+                    # # Scale each feature's loss by its respective weight
+                    # weighted_loss = elementwise_loss * weights
+
+                    # Reduce to a scalar loss (e.g., mean across all samples and features)
+                    # loss = weighted_loss.mean()
+                    loss = self.prop_criterion(outputs, targets, ln_sig_sq)
+                                    
+                    # loss = self.prop_criterion(outputs, targets)
+                    
+                    # Backward pass and optimization
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+            
+            # print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}')
+
+            # # Record average loss after each epoch to weights and biases
+            # wandb.log({"loss": loss.item()})
+
+
+
+        self.curr_rollout_lstm_input = []
+        self.curr_rollout_lstm_target = []
+
+        # rewards = self.memory.get_tensor_by_name("rewards")
+        # states = self.memory.get_tensor_by_name("states")
+
+        # print(rewards.shape)
+        # print(states.shape)
