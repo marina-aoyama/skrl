@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import itertools
@@ -215,6 +216,16 @@ class PPO(Agent):
         print("Prop estimator models initialized.")
         # print(self.prop_models)
 
+        # Load trained property estimator models in eval 
+        pre_trained_path_dir = "/workspace/sliding/logs/skrl/sliding_newnew/2026-06-11_16-17-08_ppo_torch/checkpoints_prop/"
+        for i in range(5): 
+            curr_lstm_path = "LSTM_" + str(i) + "_best.pth"
+            curr_pre_trained_path = os.path.join(pre_trained_path_dir, curr_lstm_path)
+            print(curr_pre_trained_path)
+            self.prop_models[i].load_state_dict(torch.load(curr_pre_trained_path, map_location=torch.device(self.device)))
+
+        print("Pre-trained model loaded")
+
         # Initialise property estimator observation and target buffer 
         self.curr_rollout_lstm_input = []
         self.curr_rollout_lstm_target = []
@@ -261,8 +272,8 @@ class PPO(Agent):
                 values, _ = self.value.act(inputs, role="value")
                 self._current_values = self._value_preprocessor(values, inverse=True)
 
-        print("Actions from policy model:", actions.shape)
-        print("Outputs from policy model:", type(outputs), outputs.keys())
+        # print("Actions from policy model:", actions.shape)
+        # print("Outputs from policy model:", type(outputs), outputs.keys())
 
         # # Get property estimates, uncertainty estimation and loss 
         # print("Getting property estimates and uncertainty estimation from prop estimator models.")
@@ -273,11 +284,11 @@ class PPO(Agent):
                 estimate, ln_sig_sq = model(normalized_curr_lstm_prop_input)
                 estimates.append(estimate)
                 ln_sig_sqs.append(ln_sig_sq)
-                print("Output from prop estimator model:", estimate.shape)
-                print("Log variance output from prop estimator model:", ln_sig_sq.shape)
+                # print("Output from prop estimator model:", estimate.shape)
+                # print("Log variance output from prop estimator model:", ln_sig_sq.shape)
             
-        # mean_normalized_outputs = torch.stack(outputs, dim=1).mean(dim=1)
-        # mean_normalized_sig_sq = torch.exp(torch.stack(ln_sig_sqs, dim=1).mean(dim=1))
+        mean_normalized_outputs = torch.stack(estimates, dim=1).mean(dim=1)
+        mean_normalized_sig_sq = torch.exp(torch.stack(ln_sig_sqs, dim=1).mean(dim=1))
 
         # denormalsied_output_list = []
         # denormalsied_target_list = []
@@ -410,6 +421,19 @@ class PPO(Agent):
 
         # write tracking data and checkpoints
         super().post_interaction(timestep=timestep, timesteps=timesteps)
+
+        if timestep > 1 and self.checkpoint_interval > 0 and not timestep % self.checkpoint_interval:
+            import os
+            log_model_dir = os.path.join(self.experiment_dir, "checkpoints_prop")
+            if not os.path.exists(log_model_dir):
+                os.makedirs(log_model_dir)
+
+            for i, model in enumerate(self.prop_models):
+                best_model_path = log_model_dir + f"/LSTM_{i}_best.pth"
+                torch.save(model.to(self.device).state_dict(), best_model_path)
+
+                curr_model_path = log_model_dir + f"/LSTM_{i}_"+str(timestep)+".pth"
+                torch.save(model.to(self.device).state_dict(), curr_model_path)
 
     def update(self, *, timestep: int, timesteps: int) -> None:
         """Algorithm's main update step.
@@ -563,9 +587,7 @@ class PPO(Agent):
             self.track_data("Learning / Learning rate", self.scheduler.get_last_lr()[0])
 
 
-    def update_prop_estimator(self, timestep: int, timesteps: int) -> None:
-        # print("Prop estimator update")
-        
+    def update_prop_estimator(self, timestep: int, timesteps: int) -> None:        
         for epoch in range(self.num_epochs):
             for i, rnn_input in enumerate(self.curr_rollout_lstm_input):
                 for model, optimizer in zip(self.prop_models, self.prop_optimizers):
