@@ -45,10 +45,6 @@ class SequentialTrainer(Trainer):
             cfg=SequentialTrainerCfg(**cfg) if isinstance(cfg, dict) else cfg,
         )
 
-        # Set agents to training mode
-        self.agents.training = True
-        print("Set training true")  # Training property estimators from scratch. 
-
         # init agents
         if self.num_simultaneous_agents > 1:
             for agent in self.agents:

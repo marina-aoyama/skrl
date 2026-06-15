@@ -216,14 +216,16 @@ class PPO(Agent):
         for i in range(5):
             self.prop_models.append(LSTM_Unc(input_size, hidden_size, num_layers, output_size, i).to(self.device))
         self.prop_criterion = likelihood_loss
-        # self.mse = nn.MSELoss()
+        self.mse = nn.MSELoss()
         prop_learning_rates = [0.01, 0.003, 0.001, 0.0003, 0.0001]
         self.prop_optimizers = [optim.Adam(model.parameters(), lr=prop_learning_rates[i]) for i, model in enumerate(self.prop_models)]
         print("Prop estimator models initialized.")
         # print(self.prop_models)
 
         # Load trained property estimator models in eval 
-        if not self.training: 
+        # TODO: Fix hardcoding of path and training mode 
+        trained_prop_estimators = False 
+        if trained_prop_estimators: 
             pre_trained_path_dir = "/workspace/sliding/logs/skrl/sliding_newnew/2026-06-11_16-17-08_ppo_torch/checkpoints_prop/"
             for i in range(5): 
                 curr_lstm_path = "LSTM_" + str(i) + "_best.pth"
@@ -285,9 +287,83 @@ class PPO(Agent):
             normalised_curr_lstm_prop_target = infos["target_prop_values"]
             self.normalised_curr_rollout_lstm_target.append(normalised_curr_lstm_prop_target.detach().clone())
 
+            estimates = []
+            ln_sig_sqs = []
+            with torch.no_grad():
+                for model in self.prop_models:
+                    estimate, ln_sig_sq = model(normalised_curr_lstm_prop_input)
+                    estimates.append(estimate)
+                    ln_sig_sqs.append(ln_sig_sq)
+
+            mean_normalized_estimates = torch.stack(estimates, dim=1).mean(dim=1)
+            mean_normalized_sig_sq = torch.exp(torch.stack(ln_sig_sqs, dim=1).mean(dim=1))
+
+            self.prop_normalisation_dict = infos["prop_normalisation_dict"]
+
+            denormalsied_output_list = []
+            denormalsied_target_list = []
+
+            for i, curr_prop_name in enumerate(self.all_prop_names):
+
+                prop_min, prop_max = self.prop_normalisation_dict[curr_prop_name]
+                tgt_min, tgt_max = self.prop_normalisation_dict["estimate_target"]
+
+                denormalsied_output_list.append(
+                    denormalize(
+                        mean_normalized_estimates[:, i].reshape(-1, 1),
+                        prop_min,
+                        prop_max,
+                        tgt_min,
+                        tgt_max,
+                    )
+                )
+
+                denormalsied_target_list.append(
+                    denormalize(
+                        normalised_curr_lstm_prop_target[:, i].reshape(-1, 1),
+                        prop_min,
+                        prop_max,
+                        tgt_min,
+                        tgt_max,
+                    )
+                )
+
+            denormalsied_output = torch.cat(denormalsied_output_list, dim=1)
+            denormalsied_target = torch.cat(denormalsied_target_list, dim=1)
+
+            rnn_losses = []
+            for estimate, ln_sig_sq in zip(estimates, ln_sig_sqs):
+                rnn_losses.append(self.prop_criterion(estimate, normalised_curr_lstm_prop_target, ln_sig_sq))
+
+            rnn_rmse = torch.sqrt(self.mse(denormalsied_output, denormalsied_target))
+
+            squared_error = (denormalsied_output - denormalsied_target) ** 2
+            rnn_rmse_per_prop = torch.sqrt(
+                squared_error.mean(dim=0)
+            )
+
+            mean_squares = torch.stack([torch.square(estimate) for estimate in estimates], dim=1).mean(dim=1)
+            square_mean = torch.square(mean_normalized_estimates)
+            epistemic_uncertainty_normalized = mean_squares - square_mean
+            total_uncertainty_normalized = mean_normalized_sig_sq + epistemic_uncertainty_normalized
+
+            prop_estimator_output = {
+                "rnn_loss": sum(rnn_losses)/len(rnn_losses), 
+                "rnn_rmse": rnn_rmse, 
+                "rnn_rmse_staticfric": rnn_rmse_per_prop[0], 
+                "rnn_rmse_dynamicfric": rnn_rmse_per_prop[1],
+                "rnn_rmse_restitution": rnn_rmse_per_prop[2],
+                "normalized_output": mean_normalized_estimates, 
+                "denormalsied_output": denormalsied_output, 
+                "denormalsied_target": denormalsied_target,
+                "aleatoric_uncertainty_normalized" : mean_normalized_sig_sq,
+                "epistemic_uncertainty_normalized" : epistemic_uncertainty_normalized,
+                "total_uncertainty_normalized" : total_uncertainty_normalized
+            }
 
         # print(actions.shape)
         # print(outputs.keys())
+        outputs["prop_estimator_output"] = prop_estimator_output
 
         return actions, outputs
 

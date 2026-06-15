@@ -217,6 +217,14 @@ class Trainer(ABC):
                     next_states = self.env.state()
                     self.agents.track_data("Stats / Env stepping time (ms)", timer.elapsed_time_ms)
 
+                # Pass estimator error to record to wandb 
+                if outputs.get("prop_estimator_output") is not None:
+                    self.agents.track_data("Prop estimator / output", outputs["prop_estimator_output"]["rnn_loss"].cpu().numpy())
+                    self.agents.track_data("Prop estimator / rmse", outputs["prop_estimator_output"]["rnn_rmse"].cpu().numpy())
+                    self.agents.track_data("Prop estimator / rmse staticfric", outputs["prop_estimator_output"]["rnn_rmse_staticfric"].cpu().numpy())
+                    self.agents.track_data("Prop estimator / rmse dynamicfric", outputs["prop_estimator_output"]["rnn_rmse_dynamicfric"].cpu().numpy())
+                    self.agents.track_data("Prop estimator / rmse restitution", outputs["prop_estimator_output"]["rnn_rmse_restitution"].cpu().numpy())
+
                 # render the environments
                 if not self.cfg.headless and not timestep % self.cfg.render_interval:
                     self.env.render()
