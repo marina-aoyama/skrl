@@ -217,14 +217,17 @@ class PPO(Agent):
         # print(self.prop_models)
 
         # Load trained property estimator models in eval 
-        pre_trained_path_dir = "/workspace/sliding/logs/skrl/sliding_newnew/2026-06-11_16-17-08_ppo_torch/checkpoints_prop/"
-        for i in range(5): 
-            curr_lstm_path = "LSTM_" + str(i) + "_best.pth"
-            curr_pre_trained_path = os.path.join(pre_trained_path_dir, curr_lstm_path)
-            print(curr_pre_trained_path)
-            self.prop_models[i].load_state_dict(torch.load(curr_pre_trained_path, map_location=torch.device(self.device)))
+        if not self.training: 
+            pre_trained_path_dir = "/workspace/sliding/logs/skrl/sliding_newnew/2026-06-11_16-17-08_ppo_torch/checkpoints_prop/"
+            for i in range(5): 
+                curr_lstm_path = "LSTM_" + str(i) + "_best.pth"
+                curr_pre_trained_path = os.path.join(pre_trained_path_dir, curr_lstm_path)
+                print(curr_pre_trained_path)
+                self.prop_models[i].load_state_dict(torch.load(curr_pre_trained_path, map_location=torch.device(self.device)))
 
-        print("Pre-trained model loaded")
+            print("Pre-trained model loaded")
+        else:
+            print("Training property estimator models from scratch.")
 
         # Initialise property estimator observation and target buffer 
         self.curr_rollout_lstm_input = []
@@ -243,15 +246,6 @@ class PPO(Agent):
         :return: Agent output. The first component is the expected action/value returned by the agent.
             The second component is a dictionary containing extra output values according to the model.
         """
-
-        # Get obs for property estimator 
-        curr_lstm_prop_input = infos["prop_estimator_obs"]
-        normalized_curr_lstm_prop_input = curr_lstm_prop_input.clone()
-        self.curr_rollout_lstm_input.append(normalized_curr_lstm_prop_input.detach().clone())
-
-        # Get target property values for property estimator training 
-        curr_lstm_prop_target = infos["target_prop_values"]
-        self.curr_rollout_lstm_target.append(curr_lstm_prop_target.detach().clone())
 
         inputs = {
             "observations": self._observation_preprocessor(observations),
@@ -275,42 +269,55 @@ class PPO(Agent):
         # print("Actions from policy model:", actions.shape)
         # print("Outputs from policy model:", type(outputs), outputs.keys())
 
-        # # Get property estimates, uncertainty estimation and loss 
-        # print("Getting property estimates and uncertainty estimation from prop estimator models.")
-        estimates = []
-        ln_sig_sqs = []
-        with torch.no_grad():
-            for model in self.prop_models:
-                estimate, ln_sig_sq = model(normalized_curr_lstm_prop_input)
-                estimates.append(estimate)
-                ln_sig_sqs.append(ln_sig_sq)
-                # print("Output from prop estimator model:", estimate.shape)
-                # print("Log variance output from prop estimator model:", ln_sig_sq.shape)
+        if infos: 
+            # Get obs for property estimator 
+            curr_lstm_prop_input = infos["prop_estimator_obs"]
+            normalized_curr_lstm_prop_input = curr_lstm_prop_input.clone()
+            self.curr_rollout_lstm_input.append(normalized_curr_lstm_prop_input.detach().clone())
+
+            # Get target property values for property estimator training 
+            curr_lstm_prop_target = infos["target_prop_values"]
+            self.curr_rollout_lstm_target.append(curr_lstm_prop_target.detach().clone())
+
+            # # Get property estimates, uncertainty estimation and loss 
+            # print("Getting property estimates and uncertainty estimation from prop estimator models.")
+            estimates = []
+            ln_sig_sqs = []
+            with torch.no_grad():
+                for model in self.prop_models:
+                    estimate, ln_sig_sq = model(normalized_curr_lstm_prop_input)
+                    estimates.append(estimate)
+                    ln_sig_sqs.append(ln_sig_sq)
+                    # print("Output from prop estimator model:", estimate.shape)
+                    # print("Log variance output from prop estimator model:", ln_sig_sq.shape)
+                
+            mean_normalized_outputs = torch.stack(estimates, dim=1).mean(dim=1)
+            mean_normalized_sig_sq = torch.exp(torch.stack(ln_sig_sqs, dim=1).mean(dim=1))
+
+            # denormalsied_output_list = []
+            # denormalsied_target_list = []
+            # for i, curr_prop_name in enumerate(self.all_prop_names): 
+            #     denormalsied_output_currprop = denormalize(mean_normalized_outputs[:,i].reshape(-1,1), self.prop_normalisation_dict[curr_prop_name][0], self.prop_normalisation_dict[curr_prop_name][1], self.prop_normalisation_dict["estimate_target"][0], self.prop_normalisation_dict["estimate_target"][1])
+            #     denormalsied_target_currprop = denormalize(normalized_curr_rnn_prop_target[:,i].reshape(-1,1), self.prop_normalisation_dict[curr_prop_name][0], self.prop_normalisation_dict[curr_prop_name][1], self.prop_normalisation_dict["estimate_target"][0], self.prop_normalisation_dict["estimate_target"][1])
+            #     denormalsied_output_list.append(denormalsied_output_currprop)
+            #     denormalsied_target_list.append(denormalsied_target_currprop)
+
+            # denormalsied_output = torch.cat(denormalsied_output_list, dim=1)
+            # denormalsied_target = torch.cat(denormalsied_target_list, dim=1)
             
-        mean_normalized_outputs = torch.stack(estimates, dim=1).mean(dim=1)
-        mean_normalized_sig_sq = torch.exp(torch.stack(ln_sig_sqs, dim=1).mean(dim=1))
+            # rnn_losses = []
+            # for output, ln_sig_sq in zip(outputs, ln_sig_sqs):
+            #     rnn_losses.append(self.prop_criterion(output, normalized_curr_rnn_prop_target, ln_sig_sq))
+            
+            # rnn_rmse = torch.sqrt(self.mse(denormalsied_output, curr_rnn_prop_target))
 
-        # denormalsied_output_list = []
-        # denormalsied_target_list = []
-        # for i, curr_prop_name in enumerate(self.all_prop_names): 
-        #     denormalsied_output_currprop = denormalize(mean_normalized_outputs[:,i].reshape(-1,1), self.prop_normalisation_dict[curr_prop_name][0], self.prop_normalisation_dict[curr_prop_name][1], self.prop_normalisation_dict["estimate_target"][0], self.prop_normalisation_dict["estimate_target"][1])
-        #     denormalsied_target_currprop = denormalize(normalized_curr_rnn_prop_target[:,i].reshape(-1,1), self.prop_normalisation_dict[curr_prop_name][0], self.prop_normalisation_dict[curr_prop_name][1], self.prop_normalisation_dict["estimate_target"][0], self.prop_normalisation_dict["estimate_target"][1])
-        #     denormalsied_output_list.append(denormalsied_output_currprop)
-        #     denormalsied_target_list.append(denormalsied_target_currprop)
+            # mean_squares = torch.stack([torch.square(output) for output in outputs], dim=1).mean(dim=1)
+            # square_mean = torch.square(mean_normalized_outputs)
+            # epistemic_uncertainty_normalized = mean_squares - square_mean
+            # total_uncertainty_normalized = mean_normalized_sig_sq + epistemic_uncertainty_normalized
 
-        # denormalsied_output = torch.cat(denormalsied_output_list, dim=1)
-        # denormalsied_target = torch.cat(denormalsied_target_list, dim=1)
-        
-        # rnn_losses = []
-        # for output, ln_sig_sq in zip(outputs, ln_sig_sqs):
-        #     rnn_losses.append(self.prop_criterion(output, normalized_curr_rnn_prop_target, ln_sig_sq))
-        
-        # rnn_rmse = torch.sqrt(self.mse(denormalsied_output, curr_rnn_prop_target))
-
-        # mean_squares = torch.stack([torch.square(output) for output in outputs], dim=1).mean(dim=1)
-        # square_mean = torch.square(mean_normalized_outputs)
-        # epistemic_uncertainty_normalized = mean_squares - square_mean
-        # total_uncertainty_normalized = mean_normalized_sig_sq + epistemic_uncertainty_normalized
+        # print(actions.shape)
+        # print(outputs.keys())
 
         return actions, outputs
 
