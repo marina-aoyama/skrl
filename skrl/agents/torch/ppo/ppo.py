@@ -69,6 +69,12 @@ def compute_gae(
 def likelihood_loss(mean_pred, mean_true, ln_sig_sq):
     return (1/2)*torch.mean(torch.sum(torch.exp(-1*ln_sig_sq)*torch.square(mean_true-mean_pred), dim=1) + torch.sum(ln_sig_sq, dim=1))
 
+def normalize(tensor, min_val, max_val, new_min, new_max):
+    return (tensor - min_val) / (max_val - min_val) * (new_max - new_min) + new_min
+
+def denormalize(tensor, min_val, max_val, new_min, new_max):
+    return (tensor - new_min) / (new_max - new_min) * (max_val - min_val) + min_val
+
 
 class PPO(Agent):
     def __init__(
@@ -230,8 +236,8 @@ class PPO(Agent):
             print("Training property estimator models from scratch.")
 
         # Initialise property estimator observation and target buffer 
-        self.curr_rollout_lstm_input = []
-        self.curr_rollout_lstm_target = []
+        self.normalised_curr_rollout_lstm_input = []
+        self.normalised_curr_rollout_lstm_target = []
 
     def act(
         self, observations: torch.Tensor, states: torch.Tensor | None, *, infos: dict[str, Any] | None = None, timestep: int, timesteps: int
@@ -271,50 +277,14 @@ class PPO(Agent):
 
         if infos: 
             # Get obs for property estimator 
-            curr_lstm_prop_input = infos["prop_estimator_obs"]
-            normalized_curr_lstm_prop_input = curr_lstm_prop_input.clone()
-            self.curr_rollout_lstm_input.append(normalized_curr_lstm_prop_input.detach().clone())
+            normalised_curr_lstm_prop_input = infos["prop_estimator_obs"]
+            normalised_curr_lstm_prop_input = normalised_curr_lstm_prop_input.clone()
+            self.normalised_curr_rollout_lstm_input.append(normalised_curr_lstm_prop_input.detach().clone())
 
             # Get target property values for property estimator training 
-            curr_lstm_prop_target = infos["target_prop_values"]
-            self.curr_rollout_lstm_target.append(curr_lstm_prop_target.detach().clone())
+            normalised_curr_lstm_prop_target = infos["target_prop_values"]
+            self.normalised_curr_rollout_lstm_target.append(normalised_curr_lstm_prop_target.detach().clone())
 
-            # # Get property estimates, uncertainty estimation and loss 
-            # print("Getting property estimates and uncertainty estimation from prop estimator models.")
-            estimates = []
-            ln_sig_sqs = []
-            with torch.no_grad():
-                for model in self.prop_models:
-                    estimate, ln_sig_sq = model(normalized_curr_lstm_prop_input)
-                    estimates.append(estimate)
-                    ln_sig_sqs.append(ln_sig_sq)
-                    # print("Output from prop estimator model:", estimate.shape)
-                    # print("Log variance output from prop estimator model:", ln_sig_sq.shape)
-                
-            mean_normalized_outputs = torch.stack(estimates, dim=1).mean(dim=1)
-            mean_normalized_sig_sq = torch.exp(torch.stack(ln_sig_sqs, dim=1).mean(dim=1))
-
-            # denormalsied_output_list = []
-            # denormalsied_target_list = []
-            # for i, curr_prop_name in enumerate(self.all_prop_names): 
-            #     denormalsied_output_currprop = denormalize(mean_normalized_outputs[:,i].reshape(-1,1), self.prop_normalisation_dict[curr_prop_name][0], self.prop_normalisation_dict[curr_prop_name][1], self.prop_normalisation_dict["estimate_target"][0], self.prop_normalisation_dict["estimate_target"][1])
-            #     denormalsied_target_currprop = denormalize(normalized_curr_rnn_prop_target[:,i].reshape(-1,1), self.prop_normalisation_dict[curr_prop_name][0], self.prop_normalisation_dict[curr_prop_name][1], self.prop_normalisation_dict["estimate_target"][0], self.prop_normalisation_dict["estimate_target"][1])
-            #     denormalsied_output_list.append(denormalsied_output_currprop)
-            #     denormalsied_target_list.append(denormalsied_target_currprop)
-
-            # denormalsied_output = torch.cat(denormalsied_output_list, dim=1)
-            # denormalsied_target = torch.cat(denormalsied_target_list, dim=1)
-            
-            # rnn_losses = []
-            # for output, ln_sig_sq in zip(outputs, ln_sig_sqs):
-            #     rnn_losses.append(self.prop_criterion(output, normalized_curr_rnn_prop_target, ln_sig_sq))
-            
-            # rnn_rmse = torch.sqrt(self.mse(denormalsied_output, curr_rnn_prop_target))
-
-            # mean_squares = torch.stack([torch.square(output) for output in outputs], dim=1).mean(dim=1)
-            # square_mean = torch.square(mean_normalized_outputs)
-            # epistemic_uncertainty_normalized = mean_squares - square_mean
-            # total_uncertainty_normalized = mean_normalized_sig_sq + epistemic_uncertainty_normalized
 
         # print(actions.shape)
         # print(outputs.keys())
@@ -596,14 +566,14 @@ class PPO(Agent):
 
     def update_prop_estimator(self, timestep: int, timesteps: int) -> None:        
         for epoch in range(self.num_epochs):
-            for i, rnn_input in enumerate(self.curr_rollout_lstm_input):
+            for i, rnn_input in enumerate(self.normalised_curr_rollout_lstm_input):
                 for model, optimizer in zip(self.prop_models, self.prop_optimizers):
                     # print("RNN input shapeeeeeeeeeeeeeeeeeeee")
                     # print(rnn_input.shape)
                     # print(i)
-                    # print(self.curr_rollout_lstm_target[i].shape)
+                    # print(self.normalised_curr_rollout_lstm_target[i].shape)
 
-                    targets = self.curr_rollout_lstm_target[i]
+                    targets = self.normalised_curr_rollout_lstm_target[i]
                     
                     outputs, ln_sig_sq = model(rnn_input)
 
@@ -640,8 +610,8 @@ class PPO(Agent):
 
 
 
-        self.curr_rollout_lstm_input = []
-        self.curr_rollout_lstm_target = []
+        self.normalised_curr_rollout_lstm_input = []
+        self.normalised_curr_rollout_lstm_target = []
 
         # rewards = self.memory.get_tensor_by_name("rewards")
         # states = self.memory.get_tensor_by_name("states")
