@@ -342,6 +342,9 @@ class PPO(Agent):
                 squared_error.mean(dim=0)
             )
 
+            # This gives [num_envs, num_prop] for reward computation per env 
+            rnn_rmse_env_prop = torch.abs(denormalsied_output - denormalsied_target)
+
             mean_squares = torch.stack([torch.square(estimate) for estimate in estimates], dim=1).mean(dim=1)
             square_mean = torch.square(mean_normalized_estimates)
             epistemic_uncertainty_normalized = mean_squares - square_mean
@@ -353,6 +356,9 @@ class PPO(Agent):
                 "rnn_rmse_staticfric": rnn_rmse_per_prop[0], 
                 "rnn_rmse_dynamicfric": rnn_rmse_per_prop[1],
                 "rnn_rmse_restitution": rnn_rmse_per_prop[2],
+                "rnn_rmse_staticfric_env": rnn_rmse_env_prop[:, 0],
+                "rnn_rmse_dynamicfric_env": rnn_rmse_env_prop[:, 1],
+                "rnn_rmse_restitution_env": rnn_rmse_env_prop[:, 2],
                 "normalized_output": mean_normalized_estimates, 
                 "denormalsied_output": denormalsied_output, 
                 "denormalsied_target": denormalsied_target,

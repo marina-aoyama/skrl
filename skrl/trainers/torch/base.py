@@ -229,6 +229,9 @@ class Trainer(ABC):
                 if not self.cfg.headless and not timestep % self.cfg.render_interval:
                     self.env.render()
 
+                # send property estimator information to env for reward computation and task policy input 
+                self.env._get_property_estimator_info(outputs["prop_estimator_output"])
+
                 # record the environments' transitions
                 self.agents.record_transition(
                     observations=observations,
