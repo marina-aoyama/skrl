@@ -232,7 +232,6 @@ class PPO(Agent):
                 curr_pre_trained_path = os.path.join(pre_trained_path_dir, curr_lstm_path)
                 print(curr_pre_trained_path)
                 self.prop_models[i].load_state_dict(torch.load(curr_pre_trained_path, map_location=torch.device(self.device)))
-
             print("Pre-trained model loaded")
         else:
             print("Training property estimator models from scratch.")

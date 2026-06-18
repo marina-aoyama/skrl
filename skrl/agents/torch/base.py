@@ -68,7 +68,6 @@ class ExperimentCfg:
     Visit the `Weights & Biases documentation <https://docs.wandb.ai/ref/python/functions/init/>`_ for more details.
     """
 
-
 @dataclasses.dataclass(kw_only=True)
 class AgentCfg(ABC):
     """Base class for the agent's configuration."""
