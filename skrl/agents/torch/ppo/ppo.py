@@ -224,9 +224,9 @@ class PPO(Agent):
 
         # Load trained property estimator models in eval 
         # TODO: Fix hardcoding of path and training mode 
-        trained_prop_estimators = False 
+        trained_prop_estimators = True 
         if trained_prop_estimators: 
-            pre_trained_path_dir = "/workspace/sliding/logs/skrl/sliding_newnew/2026-06-11_16-17-08_ppo_torch/checkpoints_prop/"
+            pre_trained_path_dir = "/workspace/sliding/logs/skrl/sliding_newnew/2026-06-18_18-57-58_ppo_torch/checkpoints_prop/"
             for i in range(5): 
                 curr_lstm_path = "LSTM_" + str(i) + "_best.pth"
                 curr_pre_trained_path = os.path.join(pre_trained_path_dir, curr_lstm_path)
@@ -343,7 +343,7 @@ class PPO(Agent):
             )
 
             # This gives [num_envs, num_prop] for reward computation per env 
-            rnn_rmse_env_prop = torch.abs(denormalsied_output - denormalsied_target)
+            rnn_normalised_abserr_env_prop = torch.abs(mean_normalized_estimates - normalised_curr_lstm_prop_target)
 
             mean_squares = torch.stack([torch.square(estimate) for estimate in estimates], dim=1).mean(dim=1)
             square_mean = torch.square(mean_normalized_estimates)
@@ -356,9 +356,9 @@ class PPO(Agent):
                 "rnn_rmse_staticfric": rnn_rmse_per_prop[0], 
                 "rnn_rmse_dynamicfric": rnn_rmse_per_prop[1],
                 "rnn_rmse_restitution": rnn_rmse_per_prop[2],
-                "rnn_rmse_staticfric_env": rnn_rmse_env_prop[:, 0],
-                "rnn_rmse_dynamicfric_env": rnn_rmse_env_prop[:, 1],
-                "rnn_rmse_restitution_env": rnn_rmse_env_prop[:, 2],
+                "rnn_normalised_abserr_env_staticfric_env": rnn_normalised_abserr_env_prop[:, 0],
+                "rnn_normalised_abserr_env_dynamicfric_env": rnn_normalised_abserr_env_prop[:, 1],
+                "rnn_normalised_abserr_env_restitution_env": rnn_normalised_abserr_env_prop[:, 2],
                 "normalized_output": mean_normalized_estimates, 
                 "denormalsied_output": denormalsied_output, 
                 "denormalsied_target": denormalsied_target,
