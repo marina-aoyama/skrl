@@ -76,7 +76,7 @@ def denormalize(tensor, min_val, max_val, new_min, new_max):
     return (tensor - new_min) / (new_max - new_min) * (max_val - min_val) + min_val
 
 
-class PPO(Agent):
+class PPO_ExpPolicy(Agent):
     def __init__(
         self,
         *,

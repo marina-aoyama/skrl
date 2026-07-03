@@ -230,7 +230,8 @@ class Trainer(ABC):
                     self.env.render()
 
                 # send property estimator information to env for reward computation and task policy input 
-                self.env._get_property_estimator_info(outputs["prop_estimator_output"])
+                if outputs.get("prop_estimator_output") is not None:
+                    self.env._get_property_estimator_info(outputs["prop_estimator_output"])
 
                 # record the environments' transitions
                 self.agents.record_transition(
