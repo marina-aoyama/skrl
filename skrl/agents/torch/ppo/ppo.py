@@ -222,23 +222,26 @@ class PPO(Agent):
         print("Prop estimator models initialized.")
         # print(self.prop_models)
 
-        # Load trained property estimator models in eval 
-        # TODO: Fix hardcoding of path and training mode 
-        trained_prop_estimators = True 
-        if trained_prop_estimators: 
-            pre_trained_path_dir = "/workspace/sliding/logs/skrl/sliding_newnew/2026-06-18_18-57-58_ppo_torch/checkpoints_prop/"
-            for i in range(5): 
-                curr_lstm_path = "LSTM_" + str(i) + "_best.pth"
-                curr_pre_trained_path = os.path.join(pre_trained_path_dir, curr_lstm_path)
-                print(curr_pre_trained_path)
-                self.prop_models[i].load_state_dict(torch.load(curr_pre_trained_path, map_location=torch.device(self.device)))
-            print("Pre-trained model loaded")
-        else:
-            print("Training property estimator models from scratch.")
+        # Property estimator models are trained from scratch by default. Call
+        # `load_prop_estimators()` after construction (e.g. from play/eval scripts)
+        # to load pre-trained checkpoints instead.
+        print("Training property estimator models from scratch.")
 
-        # Initialise property estimator observation and target buffer 
+        # Initialise property estimator observation and target buffer
         self.normalised_curr_rollout_lstm_input = []
         self.normalised_curr_rollout_lstm_target = []
+
+    def load_prop_estimators(self, path_dir: str) -> None:
+        """Load pre-trained property estimator (LSTM) checkpoints.
+
+        :param path_dir: Directory containing ``LSTM_{i}_best.pth`` files, as saved
+            by :meth:`post_interaction` under ``<experiment_dir>/checkpoints_prop``.
+        """
+        for i in range(5):
+            curr_pre_trained_path = os.path.join(path_dir, f"LSTM_{i}_best.pth")
+            print(curr_pre_trained_path)
+            self.prop_models[i].load_state_dict(torch.load(curr_pre_trained_path, map_location=torch.device(self.device)))
+        print("Pre-trained property estimator models loaded.")
 
     def act(
         self, observations: torch.Tensor, states: torch.Tensor | None, *, infos: dict[str, Any] | None = None, timestep: int, timesteps: int
